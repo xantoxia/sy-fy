@@ -4,14 +4,11 @@ import base64
 import wave
 from io import BytesIO
 
-# ========== 配置 ==========
+# ========== 配置（使用你已有的百度密钥）==========
 API_KEY = st.secrets.get("API_KEY", "")
 SECRET_KEY = st.secrets.get("SECRET_KEY", "")
-# 主手语API + 备用手语API
-SIGN_API_MAIN = "https://labs.brand.fun/api/sign?text="
-SIGN_API_BACKUP = "https://sign.langlab.cn/api/tts?text="
 
-# ========== 百度语音识别 ==========
+# ========== 百度通用鉴权（语音识别+图片搜索共用）==========
 @st.cache_resource(ttl=86400)
 def get_baidu_token():
     if not API_KEY or not SECRET_KEY:
@@ -22,7 +19,7 @@ def get_baidu_token():
     except:
         return None
 
-# 音频重采样：48kHz → 16kHz（百度ASR要求）
+# ========== 百度语音识别 ==========
 def resample_to_16k(wav_bytes):
     try:
         with wave.open(BytesIO(wav_bytes), 'rb') as wf:
@@ -71,26 +68,29 @@ def baidu_asr(wav_bytes, token):
     except Exception as e:
         return f"ASR错误: {str(e)}"
 
-# 手语生成（主API失败自动切换备用）
-def generate_sign(text):
-    for api_url in [SIGN_API_MAIN, SIGN_API_BACKUP]:
-        try:
-            encoded_text = requests.utils.quote(text)
-            full_url = api_url + encoded_text
-            
-            # 先检查API是否返回图片
-            resp = requests.get(full_url, timeout=10, stream=True)
-            resp.raise_for_status()
-            
-            content_type = resp.headers.get("Content-Type", "")
-            if content_type.startswith("image/"):
-                return full_url, None
-            else:
-                continue
-        except Exception as e:
-            continue
-    
-    return None, "所有手语API均不可用，请稍后再试"
+# ========== 百度图片搜索API（搜索手语图片）==========
+def search_sign_image(text, token):
+    try:
+        # 搜索关键词：国家通用手语 + 识别出的文字
+        keyword = f"国家通用手语 {text}"
+        url = f"https://aip.baidubce.com/rest/2.0/image-classify/v1/advanced_general?access_token={token}"
+        
+        data = {
+            "query": keyword,
+            "num": 1,  # 只返回1张最相关的图片
+            "start": 0
+        }
+        
+        resp = requests.post(url, data=data, timeout=15)
+        j = resp.json()
+        
+        if j.get("result") and len(j["result"]) > 0:
+            return j["result"][0]["thumbnailUrl"]
+        else:
+            return None
+    except Exception as e:
+        st.error(f"图片搜索错误: {str(e)}")
+        return None
 
 # ========== 页面 ==========
 st.set_page_config(page_title="语音转手语", layout="centered")
@@ -102,7 +102,7 @@ if not token:
     st.warning("请在Streamlit后台配置百度API_KEY和SECRET_KEY")
     st.stop()
 
-# 原生录音组件
+# 原生录音组件（Streamlit 1.58.0已修复兼容问题）
 audio = st.audio_input("点击麦克风说话")
 
 if audio:
@@ -110,11 +110,11 @@ if audio:
         text = baidu_asr(audio.read(), token)
         st.subheader("识别结果：" + text)
         
-        with st.spinner("生成手语中..."):
-            sign_url, error = generate_sign(text)
-            if sign_url:
-                st.image(sign_url, width=400, caption="国标通用手语")
+        with st.spinner("搜索手语图片中..."):
+            sign_image_url = search_sign_image(text, token)
+            if sign_image_url:
+                st.image(sign_image_url, width=400, caption=f"国家通用手语：{text}")
             else:
-                st.error(f"手语生成失败：{error}")
+                st.error("未找到对应的手语图片，请尝试其他文字")
 
-st.caption("✅ 语音识别已正常 | 自动切换手语API | 云端部署")
+st.caption("✅ 语音识别正常 | 百度图片搜索手语 | 云端部署")

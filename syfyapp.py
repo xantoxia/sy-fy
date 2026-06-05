@@ -1,67 +1,44 @@
 import streamlit as st
 import requests
-import time
 
 # ---------------------- 页面配置 ----------------------
 st.set_page_config(
     page_title="实时语音转手语",
-    layout="centered",
-    initial_sidebar_state="collapsed"
+    layout="centered"
 )
 
-st.title("🗣️ 实时语音 → 国家通用手语翻译")
-st.markdown("### 无需安装任何软件，打开浏览器即用")
+st.title("🗣️ 实时语音 → 国家通用手语")
 st.divider()
 
-# ---------------------- 前端录音（Streamlit 云端支持） ----------------------
-audio_value = st.experimental_audio_input("点击麦克风开始说话", format="wav")
+# ---------------------- 录音 ----------------------
+audio = st.audio_input("点击麦克风说话")
+text_out = st.empty()
+sign_out = st.empty()
 
-# ---------------------- 手语展示区域 ----------------------
-col1, col2 = st.columns(2)
+# ---------------------- 手语接口 ----------------------
+SIGN_URL = "https://labs.brand.fun/api/sign?text="
 
-with col1:
-    st.markdown("##### 🔤 识别文字")
-    text_area = st.empty()
-
-with col2:
-    st.markdown("##### 🖐️ 实时手语动画")
-    sign_area = st.empty()
-
-# ---------------------- 手语动画接口 ----------------------
-SIGN_API = "https://labs.brand.fun/api/sign?text="
-
-# ---------------------- 语音识别（云端免费接口） ----------------------
-def speech_to_text(audio_bytes):
+# ---------------------- 免费在线语音识别 ----------------------
+def asr(audio_bytes):
     try:
-        # 调用免费公共云端ASR接口（Streamlit Cloud 100%可用）
-        res = requests.post(
+        r = requests.post(
             "https://api.airstudio.ai/asr",
             files={"audio": audio_bytes},
-            timeout=10
+            timeout=8
         )
-        data = res.json()
-        return data.get("text", "识别失败")
+        return r.json().get("text", "识别失败")
     except:
-        return "网络超时，请重试"
+        return "网络超时"
 
-# ---------------------- 主逻辑 ----------------------
-if audio_value is not None:
-    # 显示正在识别
-    text_area.info("正在识别...")
-    sign_area.info("等待手语生成...")
+# ---------------------- 执行 ----------------------
+if audio:
+    with st.spinner("识别中..."):
+        text = asr(audio)
+        text_out.subheader("识别结果：" + text)
+        
+        try:
+            sign_out.image(SIGN_URL + requests.utils.quote(text))
+        except:
+            sign_out.error("手语生成失败")
 
-    # 语音转文字
-    text = speech_to_text(audio_value)
-
-    # 显示文字
-    text_area.success(text)
-
-    # 生成手语图片
-    try:
-        sign_url = SIGN_API + requests.utils.quote(text)
-        sign_area.image(sign_url, use_column_width=True)
-    except:
-        sign_area.error("手语生成失败")
-
-st.divider()
-st.caption("✅ 基于 Streamlit Cloud 部署 | 国家通用手语 | 全浏览器支持")
+st.caption("✅ 任何电脑打开即用 | 云端运行 | 无需安装")

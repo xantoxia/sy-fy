@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import base64
 
@@ -49,7 +50,14 @@ if not token:
     st.warning("请在 Streamlit 后台配置百度 API_KEY 和 SECRET_KEY")
     st.stop()
 
-# ========== 修复版：单组件纯前端录音+官方通信 ==========
+# ========== 真正的自定义录音组件（支持双向通信）==========
+recorder_component = components.declare_component(
+    "audio_recorder",
+    path=None,
+    url=None
+)
+
+# 组件HTML代码
 recorder_html = """
 <div style="text-align:center;">
     <button id="recordBtn" style="padding:12px 24px; font-size:16px; background:#0078d7; color:white; border:none; border-radius:8px; cursor:pointer;">
@@ -131,8 +139,12 @@ recordBtn.addEventListener('click', async () => {
             reader.readAsDataURL(wavBlob);
             reader.onloadend = () => {
                 const base64Audio = reader.result.split(',')[1];
-                // Streamlit官方通信方式：返回数据给后端
-                window.streamlitAPI.setComponentValue(base64Audio);
+                // 官方正确通信方式：发送数据给后端
+                window.parent.postMessage({
+                    isStreamlitMessage: true,
+                    type: "streamlit:setComponentValue",
+                    value: base64Audio
+                }, "*");
                 status.textContent = "录音完成，正在识别...";
             };
         };
@@ -154,11 +166,11 @@ recordBtn.addEventListener('click', async () => {
 </script>
 """
 
-# 嵌入录音组件并获取返回值
-audio_base64 = st.components.v1.html(recorder_html, height=150)
+# 调用自定义组件
+audio_base64 = recorder_component(html=recorder_html, height=150, key="recorder")
 
 # 处理识别和手语生成
-if audio_base64:
+if audio_base64 and isinstance(audio_base64, str):
     with st.spinner("正在识别并生成手语..."):
         wav_bytes = base64.b64decode(audio_base64)
         text = baidu_asr(wav_bytes, token)

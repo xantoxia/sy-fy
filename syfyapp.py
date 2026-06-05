@@ -41,8 +41,8 @@ if not token:
     st.warning("请在Streamlit后台配置百度API_KEY和SECRET_KEY")
     st.stop()
 
-# 原生录音组件（Streamlit 1.58.0 已完全修复Python3.14兼容问题）
-audio = st.audio_input("点击麦克风说话", format="wav")
+# 修复：去掉format参数（Streamlit 1.58.0默认输出wav 16kHz）
+audio = st.audio_input("点击麦克风说话")
 
 if audio:
     with st.spinner("识别中..."):

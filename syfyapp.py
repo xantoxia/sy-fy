@@ -59,6 +59,6 @@ if audio_value and token:
             st.error("手语生成失败")
 
 if not token:
-st.warning("请在 Streamlit 后台配置百度 API_KEY 和 SECRET_KEY")
+    st.warning("请在 Streamlit 后台配置百度 API_KEY 和 SECRET_KEY")
 
 st.caption("✅ 安全无密钥泄露｜云端部署｜国标手语")

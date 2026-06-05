@@ -1,6 +1,8 @@
 import streamlit as st
 import requests
 import base64
+import wave
+from io import BytesIO
 
 # ========== 配置 ==========
 API_KEY = st.secrets.get("API_KEY", "")
@@ -18,16 +20,63 @@ def get_baidu_token():
     except:
         return None
 
+# 音频重采样：48kHz → 16kHz（百度ASR要求）
+def resample_to_16k(wav_bytes):
+    try:
+        with wave.open(BytesIO(wav_bytes), 'rb') as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            framerate = wf.getframerate()
+            n_frames = wf.getnframes()
+            frames = wf.readframes(n_frames)
+        
+        # 如果已经是16kHz，直接返回
+        if framerate == 16000:
+            return wav_bytes
+        
+        # 简单降采样：每3个样本取1个（48000/16000=3）
+        new_frames = b''
+        for i in range(0, len(frames), sampwidth * n_channels * 3):
+            new_frames += frames[i:i+sampwidth*n_channels]
+        
+        # 生成新的WAV文件
+        output = BytesIO()
+        with wave.open(output, 'wb') as wf:
+            wf.setnchannels(n_channels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(16000)
+            wf.writeframes(new_frames)
+        
+        return output.getvalue()
+    except:
+        return wav_bytes
+
 def baidu_asr(wav_bytes, token):
     try:
+        # 重采样到16kHz
+        wav_16k = resample_to_16k(wav_bytes)
+        
         data = {
-            "format": "wav", "rate": 16000, "dev_pid": 1537,
-            "speech": base64.b64encode(wav_bytes).decode(),
-            "len": len(wav_bytes), "access_token": token
+            "format": "wav", 
+            "rate": 16000, 
+            "dev_pid": 1537,
+            "speech": base64.b64encode(wav_16k).decode(),
+            "len": len(wav_16k), 
+            "access_token": token
         }
+        
         resp = requests.post("https://aip.baidubce.com/rest/2.0/speech/v1/asr", data=data, timeout=15)
-        j = resp.json()
-        return j["result"][0] if j["err_no"] == 0 else f"识别失败: {j['err_msg']}"
+        
+        # 打印原始响应用于调试
+        try:
+            j = resp.json()
+        except:
+            return f"接口返回非JSON: {resp.text[:100]}"
+            
+        if j.get("err_no") == 0:
+            return j["result"][0]
+        else:
+            return f"识别失败: {j.get('err_msg')} (错误码: {j.get('err_no')})"
     except Exception as e:
         return f"错误: {str(e)}"
 
@@ -41,7 +90,7 @@ if not token:
     st.warning("请在Streamlit后台配置百度API_KEY和SECRET_KEY")
     st.stop()
 
-# 修复：去掉format参数（Streamlit 1.58.0默认输出wav 16kHz）
+# 原生录音组件
 audio = st.audio_input("点击麦克风说话")
 
 if audio:
@@ -53,4 +102,4 @@ if audio:
         except:
             st.error("手语生成失败")
 
-st.caption("✅ 原生Streamlit录音 | 云端部署 | 国标手语")
+st.caption("✅ 原生Streamlit录音 | 自动重采样 | 云端部署 | 国标手语")

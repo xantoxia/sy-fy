@@ -49,8 +49,8 @@ if not token:
     st.warning("请在 Streamlit 后台配置百度 API_KEY 和 SECRET_KEY")
     st.stop()
 
-# ========== 纯前端HTML5录音组件（彻底绕过Streamlit原生bug）==========
-html_recorder = """
+# ========== 修复版：单组件纯前端录音+官方通信 ==========
+recorder_html = """
 <div style="text-align:center;">
     <button id="recordBtn" style="padding:12px 24px; font-size:16px; background:#0078d7; color:white; border:none; border-radius:8px; cursor:pointer;">
         🎙️ 点击开始录音
@@ -65,25 +65,76 @@ let isRecording = false;
 const recordBtn = document.getElementById('recordBtn');
 const status = document.getElementById('status');
 
+// WebM转WAV（百度ASR只支持WAV）
+async function webmToWav(webmBlob) {
+    const arrayBuffer = await webmBlob.arrayBuffer();
+    const audioContext = new AudioContext({ sampleRate: 16000 });
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    
+    const numChannels = 1;
+    const sampleRate = 16000;
+    const format = 1; // PCM
+    const bitDepth = 16;
+    
+    const bytesPerSample = bitDepth / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const dataLength = audioBuffer.length * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataLength);
+    const view = new DataView(buffer);
+    
+    // WAV头
+    function writeString(offset, string) {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    }
+    
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataLength, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, format, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeString(36, 'data');
+    view.setUint32(40, dataLength, true);
+    
+    // 音频数据
+    const channelData = audioBuffer.getChannelData(0);
+    let offset = 44;
+    for (let i = 0; i < channelData.length; i++) {
+        const sample = Math.max(-1, Math.min(1, channelData[i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+    }
+    
+    return new Blob([buffer], { type: 'audio/wav' });
+}
+
 recordBtn.addEventListener('click', async () => {
     if (!isRecording) {
         // 开始录音
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/wav' });
+        mediaRecorder = new MediaRecorder(stream);
         
         audioChunks = [];
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         
-        mediaRecorder.onstop = () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+        mediaRecorder.onstop = async () => {
+            const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const wavBlob = await webmToWav(webmBlob);
             const reader = new FileReader();
-            reader.readAsDataURL(audioBlob);
+            reader.readAsDataURL(wavBlob);
             reader.onloadend = () => {
                 const base64Audio = reader.result.split(',')[1];
-                // 传给Streamlit后端
-                window.parent.postMessage({ type: 'audio', data: base64Audio }, '*');
+                // Streamlit官方通信方式：返回数据给后端
+                window.streamlitAPI.setComponentValue(base64Audio);
+                status.textContent = "录音完成，正在识别...";
             };
-            status.textContent = "录音完成，正在识别...";
         };
         
         mediaRecorder.start();
@@ -103,41 +154,20 @@ recordBtn.addEventListener('click', async () => {
 </script>
 """
 
-# 嵌入前端录音组件
-st.components.v1.html(html_recorder, height=150)
+# 嵌入录音组件并获取返回值
+audio_base64 = st.components.v1.html(recorder_html, height=150)
 
-# 接收前端传过来的音频数据
-if "audio_data" not in st.session_state:
-    st.session_state.audio_data = None
-
-# 监听前端消息
-js_listener = """
-<script>
-window.addEventListener('message', (event) => {
-    if (event.data.type === 'audio') {
-        window.parent.document.querySelector('iframe[title="streamlit_component"]').contentWindow.postMessage(
-            { type: 'audio', data: event.data.data }, '*'
-        );
-    }
-});
-</script>
-"""
-st.components.v1.html(js_listener, height=0)
-
-# 处理音频识别
-if st.session_state.audio_data:
+# 处理识别和手语生成
+if audio_base64:
     with st.spinner("正在识别并生成手语..."):
-        wav_bytes = base64.b64decode(st.session_state.audio_data)
+        wav_bytes = base64.b64decode(audio_base64)
         text = baidu_asr(wav_bytes, token)
         st.subheader("识别结果：" + text)
         
         try:
             sign_url = SIGN_URL + requests.utils.quote(text)
             st.image(sign_url, width=400)
-        except:
-            st.error("手语生成失败")
-    
-    # 清空状态，准备下一次录音
-    st.session_state.audio_data = None
+        except Exception as e:
+            st.error(f"手语生成失败: {str(e)}")
 
-st.caption("✅ 纯前端录音｜无Streamlit组件bug｜云端部署｜国标手语")
+st.caption("✅ 点击开始→点击结束→自动识别→自动出手语 | 云端部署 | 国标手语")

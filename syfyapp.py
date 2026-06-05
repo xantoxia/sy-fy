@@ -56,18 +56,13 @@ def baidu_asr(wav_bytes, token):
         # 重采样到16kHz
         wav_16k = resample_to_16k(wav_bytes)
         
-        data = {
-            "format": "wav", 
-            "rate": 16000, 
-            "dev_pid": 1537,
-            "speech": base64.b64encode(wav_16k).decode(),
-            "len": len(wav_16k), 
-            "access_token": token
-        }
+        # 更新为百度最新接口地址
+        url = f"https://vop.baidu.com/server_api?dev_pid=1537&cuid=streamlit_app&token={token}"
         
-        resp = requests.post("https://aip.baidubce.com/rest/2.0/speech/v1/asr", data=data, timeout=15)
+        headers = {"Content-Type": "audio/wav; rate=16000"}
         
-        # 打印原始响应用于调试
+        resp = requests.post(url, data=wav_16k, headers=headers, timeout=15)
+        
         try:
             j = resp.json()
         except:

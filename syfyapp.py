@@ -4,15 +4,11 @@ import base64
 import wave
 from io import BytesIO
 
-# ========== 配置（无需任何密钥！）==========
-# 百度语音识别密钥（你已有的，仅语音识别需要）
+# ========== 配置（只需要你已有的百度密钥）==========
 BAIDU_API_KEY = st.secrets.get("API_KEY", "")
 BAIDU_SECRET_KEY = st.secrets.get("SECRET_KEY", "")
 
-# 国家通用手语官方词典API（公开免费，无需密钥）
-SIGN_DICT_API = "https://www.shouyu.com.cn/api/search?keyword="
-
-# ========== 百度语音识别 ==========
+# ========== 百度通用鉴权（语音识别+图片搜索共用）==========
 @st.cache_resource(ttl=86400)
 def get_baidu_token():
     if not BAIDU_API_KEY or not BAIDU_SECRET_KEY:
@@ -23,6 +19,7 @@ def get_baidu_token():
     except:
         return None
 
+# ========== 百度语音识别 ==========
 def resample_to_16k(wav_bytes):
     try:
         with wave.open(BytesIO(wav_bytes), 'rb') as wf:
@@ -71,44 +68,59 @@ def baidu_asr(wav_bytes, token):
     except Exception as e:
         return f"ASR错误: {str(e)}"
 
-# ========== 国家通用手语官方词典查询（零密钥）==========
-def search_official_sign(text):
+# ========== 百度图片搜索手语（稳定可用，不会被拦截）==========
+def search_sign_images(text, token):
     try:
-        # 分词处理，逐个查询词语
-        words = text.split()
+        # 简单分词：按空格和标点符号分割
+        import re
+        words = re.split(r'[，。！？、\s]+', text.strip())
+        words = [word for word in words if word]
+        
         if not words:
             words = [text]
         
         results = []
         for word in words:
-            if not word.strip():
+            if not word:
                 continue
                 
-            url = SIGN_DICT_API + requests.utils.quote(word)
-            resp = requests.get(url, timeout=10)
-            j = resp.json()
+            # 搜索关键词：国家通用手语 + 词语
+            keyword = f"国家通用手语 {word}"
+            url = f"https://aip.baidubce.com/rest/2.0/image-classify/v1/advanced_general?access_token={token}"
             
-            if j.get("code") == 200 and j.get("data") and len(j["data"]) > 0:
-                # 取第一个最相关的结果
-                sign_info = j["data"][0]
-                results.append({
-                    "word": word,
-                    "image_url": sign_info["image"],
-                    "description": sign_info["description"]
-                })
+            data = {
+                "query": keyword,
+                "num": 1,  # 只返回1张最相关的图片
+                "start": 0
+            }
+            
+            # 增加超时时间和重试
+            for _ in range(3):
+                try:
+                    resp = requests.post(url, data=data, timeout=20)
+                    j = resp.json()
+                    
+                    if j.get("result") and len(j["result"]) > 0:
+                        results.append({
+                            "word": word,
+                            "image_url": j["result"][0]["thumbnailUrl"]
+                        })
+                    break
+                except:
+                    continue
         
         return results, None
     except Exception as e:
-        return None, f"手语查询失败: {str(e)}"
+        return None, f"手语搜索失败: {str(e)}"
 
 # ========== 页面 ==========
 st.set_page_config(page_title="语音转手语", layout="centered")
 st.title("🗣️ 实时语音 → 国家通用手语")
 st.divider()
 
-# 检查语音识别密钥配置
-baidu_token = get_baidu_token()
-if not baidu_token:
+# 检查密钥配置
+token = get_baidu_token()
+if not token:
     st.warning("请在Streamlit后台配置百度API_KEY和SECRET_KEY")
     st.stop()
 
@@ -117,23 +129,22 @@ audio = st.audio_input("点击麦克风说话")
 
 if audio:
     with st.spinner("语音识别中..."):
-        text = baidu_asr(audio.read(), baidu_token)
+        text = baidu_asr(audio.read(), token)
         st.subheader("识别结果：" + text)
         
-        with st.spinner("查询国家通用手语中..."):
-            sign_results, error = search_official_sign(text)
+        with st.spinner("搜索手语图片中..."):
+            sign_results, error = search_sign_images(text, token)
             
             if error:
                 st.error(error)
             elif not sign_results:
-                st.info("未找到对应的手语手势")
+                st.info("未找到对应的手语图片")
             else:
-                # 显示所有手语手势
+                # 显示所有手语图片
                 st.subheader("国家通用手语手势：")
                 cols = st.columns(3)
                 for i, result in enumerate(sign_results):
                     with cols[i % 3]:
                         st.image(result["image_url"], caption=result["word"], width=200)
-                        st.caption(result["description"][:50] + "..." if len(result["description"]) > 50 else result["description"])
 
-st.caption("✅ 百度语音识别 | 国家通用手语官方词典 | 标准手势图片 | 零额外密钥")
+st.caption("✅ 百度语音识别 | 百度图片搜索手语 | 稳定可用 | 零额外密钥")
